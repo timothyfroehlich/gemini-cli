@@ -112,7 +112,13 @@ export class WorkspaceContext {
   setDirectories(directories: readonly string[]): void {
     const newDirectories = new Set<string>();
     for (const dir of directories) {
-      newDirectories.add(this.resolveAndValidateDir(dir));
+      try {
+        newDirectories.add(this.resolveAndValidateDir(dir));
+      } catch (err) {
+        debugLogger.warn(
+          `[WARN] Skipping unreadable directory during setDirectories: ${dir} (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
     }
 
     if (

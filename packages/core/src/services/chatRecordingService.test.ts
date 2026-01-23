@@ -16,6 +16,7 @@ import type {
 import { ChatRecordingService } from './chatRecordingService.js';
 import type { Config } from '../config/config.js';
 import { getProjectHash } from '../utils/paths.js';
+import type { WorkspaceContext } from '../utils/workspaceContext.js';
 
 vi.mock('node:fs');
 vi.mock('node:path');
@@ -77,6 +78,14 @@ describe('ChatRecordingService', () => {
 
   describe('initialize', () => {
     it('should create a new session if none is provided', () => {
+      const workspaceContext = {
+        getDirectories: vi.fn().mockReturnValue(['/test/project/root']),
+        onDirectoriesChanged: vi.fn().mockReturnValue(() => {}),
+      };
+      vi.mocked(mockConfig.getWorkspaceContext).mockReturnValue(
+        workspaceContext as unknown as WorkspaceContext,
+      );
+
       chatRecordingService.initialize();
 
       expect(mkdirSyncSpy).toHaveBeenCalledWith(
@@ -84,30 +93,86 @@ describe('ChatRecordingService', () => {
         { recursive: true },
       );
       expect(writeFileSyncSpy).not.toHaveBeenCalled();
+      expect(workspaceContext.onDirectoriesChanged).toHaveBeenCalled();
     });
 
     it('should resume from an existing session if provided', () => {
-      const readFileSyncSpy = vi.spyOn(fs, 'readFileSync').mockReturnValue(
+      const workspaceContext = {
+        getDirectories: vi.fn().mockReturnValue(['/test/project/root']),
+        setDirectories: vi.fn(),
+        onDirectoriesChanged: vi.fn().mockReturnValue(() => {}),
+      };
+      vi.mocked(mockConfig.getWorkspaceContext).mockReturnValue(
+        workspaceContext as unknown as WorkspaceContext,
+      );
+
+      vi.spyOn(fs, 'readFileSync').mockReturnValue(
         JSON.stringify({
           sessionId: 'old-session-id',
           projectHash: 'test-project-hash',
           messages: [],
+          workspaceDirectories: ['/test/project/root', '/another/dir'],
         }),
       );
-      const writeFileSyncSpy = vi
-        .spyOn(fs, 'writeFileSync')
-        .mockImplementation(() => undefined);
 
       chatRecordingService.initialize({
         filePath: '/test/project/root/.gemini/tmp/chats/session.json',
         conversation: {
           sessionId: 'old-session-id',
+          workspaceDirectories: ['/test/project/root', '/another/dir'],
         } as ConversationRecord,
       });
 
       expect(mkdirSyncSpy).not.toHaveBeenCalled();
-      expect(readFileSyncSpy).toHaveBeenCalled();
-      expect(writeFileSyncSpy).not.toHaveBeenCalled();
+      expect(fs.readFileSync).toHaveBeenCalled();
+      expect(workspaceContext.setDirectories).toHaveBeenCalledWith([
+        '/test/project/root',
+        '/another/dir',
+      ]);
+      expect(workspaceContext.onDirectoriesChanged).toHaveBeenCalled();
+    });
+
+    it('should save workspace directories when they change', () => {
+      let changeListener: () => void = () => {};
+      const workspaceContext = {
+        getDirectories: vi.fn().mockReturnValue(['/test/project/root']),
+        onDirectoriesChanged: vi.fn().mockImplementation((listener) => {
+          changeListener = listener;
+          return () => {};
+        }),
+      };
+      vi.mocked(mockConfig.getWorkspaceContext).mockReturnValue(
+        workspaceContext as unknown as WorkspaceContext,
+      );
+
+      chatRecordingService.initialize();
+
+      const writeFileSyncSpy = vi
+        .spyOn(fs, 'writeFileSync')
+        .mockImplementation(() => undefined);
+      vi.spyOn(fs, 'readFileSync').mockReturnValue(
+        JSON.stringify({
+          sessionId: 'test-session-id',
+          projectHash: 'test-project-hash',
+          messages: [{ id: '1', type: 'user', content: 'test' }],
+        }),
+      );
+
+      // Simulate directory change
+      workspaceContext.getDirectories.mockReturnValue([
+        '/test/project/root',
+        '/new/dir',
+      ]);
+      changeListener();
+
+      expect(writeFileSyncSpy).toHaveBeenCalled();
+      const conversation = JSON.parse(
+        writeFileSyncSpy.mock.calls[0][1] as string,
+      ) as ConversationRecord;
+      expect(conversation.workspaceDirectories).toEqual([
+        '/test/project/root',
+        '/new/dir',
+      ]);
     });
   });
 

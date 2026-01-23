@@ -87,6 +87,7 @@ export interface ConversationRecord {
   lastUpdated: string;
   messages: MessageRecord[];
   summary?: string;
+  workspaceDirectories?: string[];
 }
 
 /**
@@ -134,6 +135,15 @@ export class ChatRecordingService {
         this.conversationFile = resumedSessionData.filePath;
         this.sessionId = resumedSessionData.conversation.sessionId;
 
+        // Restore workspace directories if they exist in the saved session
+        if (resumedSessionData.conversation.workspaceDirectories) {
+          this.config
+            .getWorkspaceContext()
+            .setDirectories(
+              resumedSessionData.conversation.workspaceDirectories,
+            );
+        }
+
         // Update the session ID in the existing file
         this.updateConversation((conversation) => {
           conversation.sessionId = this.sessionId;
@@ -158,15 +168,16 @@ export class ChatRecordingService {
           8,
         )}.json`;
         this.conversationFile = path.join(chatsDir, filename);
-
-        this.writeConversation({
-          sessionId: this.sessionId,
-          projectHash: this.projectHash,
-          startTime: new Date().toISOString(),
-          lastUpdated: new Date().toISOString(),
-          messages: [],
-        });
       }
+
+      // Listen for directory changes and update the conversation record
+      this.config.getWorkspaceContext().onDirectoriesChanged(() => {
+        this.updateConversation((conversation) => {
+          conversation.workspaceDirectories = [
+            ...this.config.getWorkspaceContext().getDirectories(),
+          ];
+        });
+      });
 
       // Clear any queued data since this is a fresh start
       this.queuedThoughts = [];
@@ -400,6 +411,9 @@ export class ChatRecordingService {
         startTime: new Date().toISOString(),
         lastUpdated: new Date().toISOString(),
         messages: [],
+        workspaceDirectories: [
+          ...this.config.getWorkspaceContext().getDirectories(),
+        ],
       };
     }
   }
